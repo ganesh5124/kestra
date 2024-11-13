@@ -6,6 +6,7 @@ import io.kestra.core.metrics.MetricRegistry;
 import io.kestra.core.models.executions.*;
 import io.kestra.core.models.flows.Flow;
 import io.kestra.core.models.flows.State;
+import io.kestra.core.models.flows.sla.Violation;
 import io.kestra.core.models.tasks.ExecutableTask;
 import io.kestra.core.models.tasks.ExecutionUpdatableTask;
 import io.kestra.core.models.tasks.FlowableTask;
@@ -15,10 +16,7 @@ import io.kestra.core.models.tasks.RunnableTask;
 import io.kestra.core.models.tasks.Task;
 import io.kestra.core.models.tasks.WorkerGroup;
 import io.kestra.core.models.tasks.retrys.AbstractRetry;
-import io.kestra.core.services.ConditionService;
-import io.kestra.core.services.ExecutionService;
-import io.kestra.core.services.LogService;
-import io.kestra.core.services.WorkerGroupService;
+import io.kestra.core.services.*;
 import io.kestra.core.utils.ListUtils;
 import io.kestra.plugin.core.flow.Pause;
 import io.kestra.plugin.core.flow.Subflow;
@@ -74,6 +72,9 @@ public class ExecutorService {
 
     @Inject
     private WorkerGroupService workerGroupService;
+
+    @Inject
+    private SLAService slaService;
 
     protected FlowExecutorInterface flowExecutorInterface() {
         // bean is injected late, so we need to wait
@@ -1035,5 +1036,45 @@ public class ExecutorService {
             value.getExecutionId(),
             value
         );
+    }
+
+    /**
+     * Handle flow SLA on an executor.
+     * If there are SLA violations, it will take care of updating the execution based on the SLA behavior.
+     * <p>
+     * WARNING: ATM, only the first violation will update the execution.
+     */
+    public Executor handleSLA(Executor executor) {
+        if (ListUtils.isEmpty(executor.getFlow().getSla()) || executor.getExecution().getState().isTerminated()) {
+            return executor;
+        }
+
+        List<Violation> violations = slaService.handleSLA(executor.getFlow(), executor.getExecution());
+        if (!violations.isEmpty()) {
+            // For now, we only consider the first violation to be capable of updating the execution.
+            // Other violations would only be logged.
+            Violation violation = violations.getFirst();
+            Execution newExecution = switch (violation.behavior()) {
+                case FAIL -> markAs(executor.getExecution(), State.Type.FAILED);
+                case CANCEL -> markAs(executor.getExecution(), State.Type.CANCELLED);
+            };
+            return executor.withExecution(newExecution, "handleSLA");
+        }
+
+        return executor;
+    }
+
+    private Execution markAs(Execution execution, State.Type state) {
+        return execution.findLastNotTerminated()
+            .map(taskRun -> {
+                try {
+                    return execution.withTaskRun(taskRun.withState(state));
+                } catch (InternalException e) {
+                    // in case we cannot update the last not terminated task run, we ignore it
+                    return execution;
+                }
+            })
+            .orElse(execution)
+            .withState(state);
     }
 }

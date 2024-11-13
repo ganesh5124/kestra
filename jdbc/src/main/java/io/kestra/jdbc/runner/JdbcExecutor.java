@@ -410,6 +410,9 @@ public class JdbcExecutor implements ExecutorInterface, Service {
                     }
                 }
 
+                // handle SLA
+                executor = executorService.handleSLA(executor);
+
                 // process the execution
                 if (log.isDebugEnabled()) {
                     executorService.log(log, true, executor);
