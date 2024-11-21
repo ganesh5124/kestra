@@ -1,7 +1,10 @@
-package io.kestra.core.models.flows.sla;
+package io.kestra.core.models.flows.sla.types;
 
 import io.kestra.core.exceptions.InternalException;
 import io.kestra.core.models.executions.Execution;
+import io.kestra.core.models.flows.sla.ExecutionMonitoringSLA;
+import io.kestra.core.models.flows.sla.SLA;
+import io.kestra.core.models.flows.sla.Violation;
 import io.kestra.core.runners.RunContext;
 import jakarta.validation.constraints.NotNull;
 import lombok.Getter;
@@ -16,7 +19,7 @@ import java.util.Optional;
 @SuperBuilder
 @Getter
 @NoArgsConstructor
-public class MaxDurationSLA extends SLA {
+public class MaxDurationSLA extends SLA implements ExecutionMonitoringSLA {
     @NotNull
     private Duration duration;
 

@@ -4,6 +4,8 @@ import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import io.kestra.core.exceptions.InternalException;
 import io.kestra.core.models.executions.Execution;
+import io.kestra.core.models.flows.sla.types.ExecutionConditionSLA;
+import io.kestra.core.models.flows.sla.types.MaxDurationSLA;
 import io.kestra.core.runners.RunContext;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
@@ -13,13 +15,6 @@ import lombok.experimental.SuperBuilder;
 
 import java.util.Optional;
 
-/*
-Notes:
-- We need two types of types:
-    - ExecutionEvaluation: will be evaluated on each execution change (like today)
-    - ExecutionMonitoring : will be evaluated using a monitor. The only implementation would be for now maxDuration.
-        -> idea: create a monitor in DB at the startup of an execution and remove it when the execution is done (like execution delay)
- */
 @SuperBuilder
 @Getter
 @NoArgsConstructor

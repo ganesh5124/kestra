@@ -16,6 +16,9 @@ import io.kestra.core.models.tasks.RunnableTask;
 import io.kestra.core.models.tasks.Task;
 import io.kestra.core.models.tasks.WorkerGroup;
 import io.kestra.core.models.tasks.retrys.AbstractRetry;
+import io.kestra.core.queues.QueueException;
+import io.kestra.core.queues.QueueFactoryInterface;
+import io.kestra.core.queues.QueueInterface;
 import io.kestra.core.services.*;
 import io.kestra.core.utils.ListUtils;
 import io.kestra.plugin.core.flow.Pause;
@@ -24,6 +27,7 @@ import io.kestra.plugin.core.flow.WaitFor;
 import io.kestra.plugin.core.flow.WorkingDirectory;
 import io.micronaut.context.ApplicationContext;
 import jakarta.inject.Inject;
+import jakarta.inject.Named;
 import jakarta.inject.Singleton;
 import lombok.extern.slf4j.Slf4j;
 import org.slf4j.Logger;
@@ -75,6 +79,10 @@ public class ExecutorService {
 
     @Inject
     private SLAService slaService;
+
+    @Inject
+    @Named(QueueFactoryInterface.KILL_NAMED)
+    protected QueueInterface<ExecutionKilled> killQueue;
 
     protected FlowExecutorInterface flowExecutorInterface() {
         // bean is injected late, so we need to wait
@@ -1044,28 +1052,39 @@ public class ExecutorService {
      * <p>
      * WARNING: ATM, only the first violation will update the execution.
      */
-    public Executor handleSLA(Executor executor) {
+    public Executor handleSLA(Executor executor) throws QueueException {
         if (ListUtils.isEmpty(executor.getFlow().getSla()) || executor.getExecution().getState().isTerminated()) {
             return executor;
         }
 
-        List<Violation> violations = slaService.handleSLA(executor.getFlow(), executor.getExecution());
+        RunContext runContext = runContextFactory.of(executor.getFlow(), executor.getExecution());
+        List<Violation> violations = slaService.evaluateExecutionChangedSLA(runContext, executor.getFlow(), executor.getExecution());
         if (!violations.isEmpty()) {
             // For now, we only consider the first violation to be capable of updating the execution.
             // Other violations would only be logged.
             Violation violation = violations.getFirst();
-            Execution newExecution = switch (violation.behavior()) {
-                case FAIL -> markAs(executor.getExecution(), State.Type.FAILED);
-                case CANCEL -> markAs(executor.getExecution(), State.Type.CANCELLED);
-            };
-            return executor.withExecution(newExecution, "handleSLA");
+            return processViolation(runContext, executor, violation);
         }
 
         return executor;
     }
 
-    private Execution markAs(Execution execution, State.Type state) {
-        return execution.findLastNotTerminated()
+    /**
+     * Process an SLA violation on an executor
+     */
+    public Executor processViolation(RunContext runContext, Executor executor, Violation violation) throws QueueException {
+        Execution newExecution = switch (violation.behavior()) {
+            case FAIL -> {
+                runContext.logger().error("SLA '{}' violated: {}", violation.slaId(), violation.reason());
+                yield markAs(executor.getExecution(), State.Type.FAILED);
+            }
+            case CANCEL -> markAs(executor.getExecution(), State.Type.CANCELLED);
+        };
+        return executor.withExecution(newExecution, "SLAViolation");
+    }
+
+    private Execution markAs(Execution execution, State.Type state) throws QueueException {
+        Execution newExecution = execution.findLastNotTerminated()
             .map(taskRun -> {
                 try {
                     return execution.withTaskRun(taskRun.withState(state));
@@ -1076,5 +1095,16 @@ public class ExecutorService {
             })
             .orElse(execution)
             .withState(state);
+
+        killQueue.emit(ExecutionKilledExecution
+            .builder()
+            .state(ExecutionKilled.State.REQUESTED)
+            .executionId(execution.getId())
+            .isOnKillCascade(false) // TODO we may offer the choice to the user heree
+            .tenantId(execution.getTenantId())
+            .build()
+        );
+
+        return newExecution;
     }
 }

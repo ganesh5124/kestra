@@ -1,7 +1,10 @@
-package io.kestra.core.models.flows.sla;
+package io.kestra.core.models.flows.sla.types;
 
 import io.kestra.core.exceptions.InternalException;
 import io.kestra.core.models.executions.Execution;
+import io.kestra.core.models.flows.sla.ExecutionChangedSLA;
+import io.kestra.core.models.flows.sla.SLA;
+import io.kestra.core.models.flows.sla.Violation;
 import io.kestra.core.runners.RunContext;
 import io.kestra.core.utils.TruthUtils;
 import jakarta.validation.constraints.NotEmpty;
@@ -15,7 +18,7 @@ import java.util.Optional;
 @SuperBuilder
 @Getter
 @NoArgsConstructor
-public class ExecutionConditionSLA extends SLA {
+public class ExecutionConditionSLA extends SLA implements ExecutionChangedSLA {
     @NotNull
     @NotEmpty
     private String condition;
